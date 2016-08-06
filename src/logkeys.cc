@@ -27,6 +27,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xos.h>
+#include <future>
 
 #ifdef HAVE_CONFIG_H
 # include <config.h>  // include config produced from ./configure
@@ -579,15 +580,12 @@ int main(int argc, char **argv)
   Window win;
   XEvent xevent;
 
-  int i=0;
-
   int revert;
   Atom type;
   int format;
   unsigned long nitems, after;
   unsigned char *class_name = 0;
   unsigned char *wm_name = 0;
-
 
   if (!disp) 
     file_size += fprintf(out, "[ERROR] Could not open display \n\n");
@@ -599,48 +597,15 @@ int main(int argc, char **argv)
   XSelectInput(disp, win, PropertyChangeMask);
   
 
-  while(i<50) {
-    i++;
+/*
+  // async call to write_window_name
+  std::future<void> wndwnm(std::async write_window_name);
+  //is this the end?
+  wndnm.get();*/
 
+  /////////////
+  while (XPending(disp)) {
     XNextEvent(disp, &xevent);
-    if ( xevent.type == PropertyNotify ) {
-      if ( !strcmp( XGetAtomName( disp, xevent.xproperty.atom ), "_NET_ACTIVE_WINDOW" ) ) {
-        //is there a way to get the window deom rhw XEvent?
-        if(XGetInputFocus(disp, &win, &revert)==0)
-          file_size += fprintf(out, "noinputfocus \n\n");
-        if (Success == XGetWindowProperty(disp, win, XInternAtom(disp,"WM_CLASS",false), 0, 65536, false, AnyPropertyType, &type, &format, &nitems, &after, &class_name)) {
-          if (class_name) {
-            file_size += fprintf(out, "\n[%s]", class_name);
-            XFree(class_name);
-          }
-          else
-            file_size += fprintf(out, "\n[WM_CLASS-NODATA]");
-        }
-        else
-          file_size += fprintf(out, "\n[WM_CLASS-NOSUCCESS]");
-
-        //_NET_WM_NAME, WM_NAME, NET_WM_NAME
-        if (Success == XGetWindowProperty(disp, win, XInternAtom(disp,"WM_NAME",false), 0, 65536, false, AnyPropertyType, &type, &format, &nitems, &after, &wm_name)) {
-          if (wm_name) {
-            file_size += fprintf(out, "[%s] > ", wm_name);
-            XFree(wm_name);
-          }
-          else
-            file_size += fprintf(out, "[WM_NAME-NODATA] > ");
-        }
-        else
-          file_size += fprintf(out, "[WM_NAME-NOSUCCESS] > ");
-      }
-    }
-    else{
-      file_size += fprintf(out, "\n\nnot propertynotify \n\n");
-    }
-    fflush(out);
-  }
-
-
-
-
 
   // infinite loop: exit gracefully by receiving SIGHUP, SIGINT or SIGTERM (of which handler closes input_fd)
   while (read(input_fd, &event, sizeof(struct input_event)) > 0) {
@@ -663,19 +628,46 @@ int main(int argc, char **argv)
 
     //// on processid change update window_title write '[process name] "process title" > '
     //// on process title change (like firefox tabs) would be better. possibly more ressource intensive?
+        
+    
+    
+      //fprintf(out, "xpending: %d i: %d\n\n",XPending(disp), i);
+      if ( xevent.type == PropertyNotify ) {
+        if ( !strcmp( XGetAtomName( disp, xevent.xproperty.atom ), "_NET_ACTIVE_WINDOW" ) ) {
+          //is there a way to get the window deom rhw XEvent?
+          if(XGetInputFocus(disp, &win, &revert)==0)
+            file_size += fprintf(out, "noinputfocus \n\n");
+          if (Success == XGetWindowProperty(disp, win, XInternAtom(disp,"WM_CLASS",false), 0, 65536, false, AnyPropertyType, &type, &format, &nitems, &after, &class_name)) {
+            if (class_name) {
+              file_size += fprintf(out, "\n[%s] ", class_name);
+              XFree(class_name);
+            }
+            else
+              file_size += fprintf(out, "\n[WM_CLASS-NODATA]");
+          }
+          else
+            file_size += fprintf(out, "\n[WM_CLASS-NOSUCCESS]");
 
-
-    /*
-    if (args.flags & FLAG_WINDOWTITLE) {
-      window_id = execute(COMMAND_STR_AWID);
-      
-      if (window_id.compare(old_window_id) != 0) {
-        cur_process_name = execute(COMMAND_STR_AWPNAME);
-        cur_window_name = execute(COMMAND_STR_AWTITLE);
-        window_title = "[" + cur_process_name.erase(cur_process_name.size() - 1) + "] " + cur_window_name.erase(cur_window_name.size() - 1) + " > "; // delete newline (why are newlines)
-        program_changed = true;
+          //_NET_WM_NAME, WM_NAME, NET_WM_NAME
+          if (Success == XGetWindowProperty(disp, win, XInternAtom(disp,"WM_NAME",false), 0, 65536, false, AnyPropertyType, &type, &format, &nitems, &after, &wm_name)) {
+            if (wm_name) {
+              file_size += fprintf(out, "[%s] > ", wm_name);
+              XFree(wm_name);
+            }
+            else
+              file_size += fprintf(out, "[WM_NAME-NODATA] > ");
+          }
+          else
+            file_size += fprintf(out, "[WM_NAME-NOSUCCESS] > ");
+        }
       }
-    }*/
+      else{
+        file_size += fprintf(out, "\n\nnot propertynotify \n\n");
+      }
+      fflush(out);
+    
+
+
 
     // if remote posting is enabled and size treshold is reached
     if (args.post_size != 0 && file_size >= args.post_size && stat(UPLOADER_PID_FILE, &st) == -1) {
@@ -776,6 +768,7 @@ int main(int argc, char **argv)
       file_size += inc_size;
     
   } // while (read(input_fd))
+}///////////////
   
   // append final timestamp, close files and exit
   time(&cur_time);
