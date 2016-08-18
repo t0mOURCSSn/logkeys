@@ -1,4 +1,4 @@
-CXXFLAGS = -lX11 -Wall -O3 -DSYS_CONF_DIR=\"$(sysconfdir)\"
+CXXFLAGS = -lX11 -lpthread -std=c++11 -Wall -O3 -DSYS_CONF_DIR=\"$(sysconfdir)\"
 
 bin_PROGRAMS = logkeys llk llkk
 logkeys_SOURCES = logkeys.cc
@@ -10,4 +10,4 @@ install-exec-hook:
 	chmod u+s    $(DESTDIR)$(bindir)/llk
 	chown root\: $(DESTDIR)$(bindir)/llkk
 	chmod u+s    $(DESTDIR)$(bindir)/llkk
-  
+	how

